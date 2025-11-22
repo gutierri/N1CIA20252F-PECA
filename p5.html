@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simulações Didáticas</title>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.7.0/lib/p5.min.js"></script>
+<style>
+  :root{--bg:#0e1117;--panel:#161b22;--ink:#e6edf3;--muted:#9da5b4;--line:#2b313c}
+  *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--ink)}
+  header{padding:14px 16px;border-bottom:1px solid var(--line)} header h1{margin:0 0 6px;font-size:18px}
+  header p{margin:0;color:var(--muted);font-size:13px}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:16px}
+  .topbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  select,input[type="number"],button{background:#0f1320;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px}
+  button{cursor:pointer}h2{margin:6px 0 10px;font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em}
+  .formulas{display:grid;gap:6px}.formula{background:#0f1424;border:1px solid var(--line);border-radius:8px;padding:10px}
+  .formula code{background:#0b0f1a;padding:2px 6px;border-radius:6px}.controls{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+  .ctrl{display:flex;align-items:center;gap:6px}.hint{color:var(--muted);font-size:12px;margin-top:6px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.canvasBox{display:flex;flex-direction:column;gap:8px}
+  .kcalc{background:#0f1424;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px}
+  .kcalc h3{margin:0 0 6px;font-size:14px;color:#7ee787}.kcalc .kv{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  @media (max-width: 1000px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="panel">
+    <div class="topbar">
+      <label for="cenario">Cenário:</label>
+      <select id="cenario">
+        <option value="mru">MRU — Movimento Retilíneo Uniforme (1D)</option>
+        <option value="mruv">MRUV — Movimento Uniformemente Variado (1D)</option>
+        <option value="proj">Lançamento Oblíquo (2D, sem resistência do ar)</option>
+        <option value="col2d">Colisão 2D entre duas partículas</option>
+      </select>
+
+      <div id="params" class="controls"></div>
+      <div class="controls">
+        <button id="playPause">▶︎ Play</button>
+        <button id="reset">↺ Reset</button>
+        <button id="exportCSV">⤓ Exportar CSV</button>
+      </div>
+    </div>
+
+    <h2>Fórmulas do cenário</h2>
+    <div id="formulaList" class="formulas"></div>
+    <div class="hint">Altere os parâmetros e observe a simulação. Em Colisão 2D, ajuste massas, raios, velocidades e coeficiente e.</div>
+  </section>
+
+  <section class="panel">
+    <div class="grid2">
+      <div class="canvasBox">
+        <h2>Simulação</h2>
+        <div id="simContainer"></div>
+        <div id="simInfo" class="hint"></div>
+      </div>
+      <div class="canvasBox">
+        <h2>Cálculos de Cinemática (2D)</h2>
+        <div class="kcalc"><h3>Instantes e Vetores</h3><div class="kv" id="kcalcBody"></div></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+/* =================== CENÁRIOS =================== */
+const cenarios = {
+  mru: {
+    formulas: [
+      { t: "Posição",   f: "x(t) = x₀ + v · t" },
+      { t: "Velocidade",f: "v(t) = v (constante)" },
+      { t: "Aceleração",f: "a(t) = 0" }
+    ],
+    params: [
+      { key:"x0", label:"x₀ (m)", type:"number", step:"1",   value:"0" },
+      { key:"v",  label:"v (m/s)", type:"number", step:"0.5", value:"5" },
+      { key:"T",  label:"T duração (s)", type:"number", step:"0.5", value:"8" },
+      { key:"m1", label:"massa (kg)", type:"number", step:"0.1", value:"1" }
+    ]
+  },
+  mruv: {
+    formulas: [
+      { t: "Posição",   f: "x(t) = x₀ + v₀·t + (1/2)·a·t²" },
+      { t: "Velocidade",f: "v(t) = v₀ + a·t" },
+      { t: "Aceleração",f: "a(t) = a (constante)" }
+    ],
+    params: [
+      { key:"x0", label:"x₀ (m)",  type:"number", step:"1",   value:"0" },
+      { key:"v0", label:"v₀ (m/s)",type:"number", step:"0.5", value:"5" },
+      { key:"a",  label:"a (m/s²)",type:"number", step:"0.5", value:"-2" },
+      { key:"T",  label:"T duração (s)", type:"number", step:"0.5", value:"8" },
+      { key:"m1", label:"massa (kg)", type:"number", step:"0.1", value:"1" }
+    ]
+  },
+  proj: {
+    formulas: [
+      { t:"v₀x, v₀y", f:"v₀x = v₀·cos(θ), v₀y = v₀·sin(θ)" },
+      { t:"Posição",  f:"x = x₀ + v₀x·t; y = y₀ + v₀y·t - (1/2)·g·t²" },
+      { t:"Velocidade", f:"vₓ = v₀x; vᵧ = v₀y - g·t" },
+      { t:"tᵥ (voo)", f:"tᵥ = (v₀y + √(v₀y² + 2·g·y₀))/g" },
+      { t:"yₘₐₓ",     f:"yₘₐₓ = y₀ + v₀y²/(2·g)" },
+      { t:"R (alcance)", f:"R = v₀x · tᵥ" }
+    ],
+    params: [
+      { key:"x0", label:"x₀ (m)",   type:"number", step:"1",   value:"0" },
+      { key:"y0", label:"y₀ (m)",   type:"number", step:"1",   value:"0" },
+      { key:"v0", label:"v₀ (m/s)", type:"number", step:"1",   value:"18" },
+      { key:"th", label:"θ (graus)",type:"number", step:"1",   value:"35" },
+      { key:"g",  label:"g (m/s²)", type:"number", step:"0.1", value:"9.8" },
+      { key:"m1", label:"massa (kg)", type:"number", step:"0.1", value:"1" }
+    ]
+  },
+  col2d: {
+    formulas: [
+      { t:"Conservação de momento (normal)", f:"J = -(1+e) (v_rel·n) / (1/m₁ + 1/m₂)" },
+      { t:"Atualização de velocidades", f:"v₁' = v₁ + (J/m₁) n ;  v₂' = v₂ - (J/m₂) n" },
+      { t:"Normal", f:"n = (r₂ - r₁) / ||r₂ - r₁||" }
+    ],
+    params: [
+      { key:"m1", label:"m₁ (kg)", type:"number", step:"0.1", value:"1.2" },
+      { key:"m2", label:"m₂ (kg)", type:"number", step:"0.1", value:"0.8" },
+      { key:"r1", label:"raio₁ (px)", type:"number", step:"1", value:"12" },
+      { key:"r2", label:"raio₂ (px)", type:"number", step:"1", value:"12" },
+      { key:"e",  label:"restituição e", type:"number", step:"0.05", value:"0.8" },
+      { key:"x1", label:"x₁ (m)", type:"number", step:"0.5", value:"3" },
+      { key:"y1", label:"y₁ (m)", type:"number", step:"0.5", value:"2" },
+      { key:"vx1", label:"vₓ₁ (m/s)", type:"number", step:"0.5", value:"2.5" },
+      { key:"vy1", label:"vᵧ₁ (m/s)", type:"number", step:"0.5", value:"0" },
+      { key:"x2", label:"x₂ (m)", type:"number", step:"0.5", value:"9" },
+      { key:"y2", label:"y₂ (m)", type:"number", step:"0.5", value:"2" },
+      { key:"vx2", label:"vₓ₂ (m/s)", type:"number", step:"0.5", value:"-1.5" },
+      { key:"vy2", label:"vᵧ₂ (m/s)", type:"number", step:"0.5", value:"0" },
+      { key:"g",  label:"g (m/s²)", type:"number", step:"0.1", value:"0" },
+      { key:"T",  label:"T duração (s)", type:"number", step:"0.5", value:"12" }
+    ]
+  }
+};
+
+/* ========== UI BÁSICA ========== */
+const elCenario = document.getElementById("cenario");
+const elParams  = document.getElementById("params");
+const elFormulas= document.getElementById("formulaList");
+const playBtn   = document.getElementById("playPause");
+const resetBtn  = document.getElementById("reset");
+const exportBtn = document.getElementById("exportCSV");
+const elSimInfo = document.getElementById("simInfo");
+const elKcalc   = document.getElementById("kcalcBody");
+
+let running = false;
+let state   = {};
+let samples = [];
+
+function renderParams(c) {
+  elParams.innerHTML = "";
+  (c.params||[]).forEach(p=>{
+    const wrap = document.createElement("div");
+    wrap.className="ctrl";
+    wrap.innerHTML = `<label>${p.label}</label>
+      <input id="param_${p.key}" type="${p.type}" step="${p.step}" value="${p.value}" style="width:120px">`;
+    elParams.appendChild(wrap);
+  });
+}
+function renderFormulas(c) {
+  elFormulas.innerHTML = "";
+  c.formulas.forEach(it=>{
+    const div = document.createElement("div");
+    div.className="formula";
+    div.innerHTML = `<div><strong>${it.t}</strong></div><div><code>${it.f}</code></div>`;
+    elFormulas.appendChild(div);
+  });
+}
+function readParams(c) {
+  state = {};
+  (c.params||[]).forEach(p=>{
+    const v = parseFloat(document.getElementById("param_"+p.key).value);
+    state[p.key] = Number.isFinite(v) ? v : 0;
+  });
+}
+
+/* ========== p5: SIMULAÇÃO ========== */
+const pxPerMeter = 20;
+let p5Instance   = null;
+
+// estado interno do sketch (exposto p/ debug mental)
+const sim = {
+  t:0, dt:1/60, tEnd:8,
+  // corpo 1
+  x1:0,y1:0,vx1:0,vy1:0,ax1:0,ay1:0,m1:1,rad1:12,
+  // corpo 2
+  has2:false,
+  x2:0,y2:0,vx2:0,vy2:0,ax2:0,ay2:0,m2:1,rad2:12,
+  e:0.8
+};
+
+function startP5() {
+  if (p5Instance) { p5Instance.remove(); p5Instance = null; }
+  p5Instance = new p5(p=>{
+    let W=640,H=420, groundY;
+
+    p.setup=()=>{
+      const cnv=p.createCanvas(W,H); cnv.parent("simContainer");
+      p.frameRate(60); groundY=H-40;
+      initFromScenario();
+    };
+
+    p.draw=()=>{
+      p.background(18,22,34);
+      p.stroke(70); p.line(0, H-40, W, H-40);
+
+      // roda apenas se running e com tEnd válido
+      if (running && sim.t < sim.tEnd) step();
+
+      // desenha bolas
+      drawBall(p, sim.x1, sim.y1, sim.rad1, [122,162,247]);
+      if (sim.has2) drawBall(p, sim.x2, sim.y2, sim.rad2, [126,231,162]);
+
+      // HUD
+      const vmag1 = Math.hypot(sim.vx1,sim.vy1);
+      elSimInfo.textContent =
+        `t=${sim.t.toFixed(2)}s | r1=(${sim.x1.toFixed(2)},${sim.y1.toFixed(2)})m | |v1|=${vmag1.toFixed(2)}m/s`
+        + (sim.has2 ? ` | r2=(${sim.x2.toFixed(2)},${sim.y2.toFixed(2)})` : "");
+
+      // cálculos e CSV
+      updateKinematics(sim.t);
+      pushSample(sim.t);
+
+      if (sim.t >= sim.tEnd) running=false; // trava ao fim
+    };
+
+    function drawBall(p, xm, ym, rpx, color){
+      const cx=40 + xm*pxPerMeter, cy=(H-40) - ym*pxPerMeter;
+      p.noStroke(); p.fill(color[0],color[1],color[2]); p.circle(cx,cy,rpx*2);
+    }
+
+    function initFromScenario(){
+      sim.t=0; samples.length=0;
+      const key = elCenario.value, cfg = cenarios[key]; readParams(cfg);
+
+      // defaults seguros
+      sim.ax1=sim.ay1=sim.ax2=sim.ay2=0; sim.has2=false; sim.e=0.8; sim.rad1=12; sim.rad2=12;
+
+      if (key==="mru"){
+        sim.x1=state.x0; sim.y1=0; sim.vx1=state.v; sim.vy1=0; sim.m1=maxp(state.m1,0.01); sim.tEnd=clampT(state.T,8);
+      }
+      if (key==="mruv"){
+        sim.x1=state.x0; sim.y1=0; sim.vx1=state.v0; sim.vy1=0; sim.ax1=state.a; sim.m1=maxp(state.m1,0.01); sim.tEnd=clampT(state.T,8);
+      }
+      if (key==="proj"){
+        const thR = (state.th||0)*Math.PI/180;
+        const v0x = (state.v0||0)*Math.cos(thR), v0y=(state.v0||0)*Math.sin(thR);
+        sim.x1=state.x0||0; sim.y1=state.y0||0; sim.vx1=v0x; sim.vy1=v0y; sim.ax1=0; sim.ay1=-(state.g||9.8); sim.m1=maxp(state.m1,0.01);
+        const disc = v0y*v0y + 2*(state.g||9.8)*(state.y0||0);
+        const tf = (disc>=0) ? (v0y + Math.sqrt(disc))/Math.max(0.0001,(state.g||9.8)) : 0;
+        sim.tEnd = clampT(tf,8);
+      }
+      if (key==="col2d"){
+        sim.has2=true;
+        sim.m1=maxp(state.m1,0.01); sim.m2=maxp(state.m2,0.01);
+        sim.rad1=maxp(state.r1,4);   sim.rad2=maxp(state.r2,4);
+        sim.x1=state.x1; sim.y1=state.y1; sim.vx1=state.vx1; sim.vy1=state.vy1;
+        sim.x2=state.x2; sim.y2=state.y2; sim.vx2=state.vx2; sim.vy2=state.vy2;
+        sim.ax1=0; sim.ay1=-(state.g||0); sim.ax2=0; sim.ay2=-(state.g||0);
+        sim.e = clamp(state.e,0,1);
+        sim.tEnd = clampT(state.T,12);
+      }
+    }
+
+    function step(){
+      // integra
+      sim.vx1 += sim.ax1*sim.dt; sim.vy1 += sim.ay1*sim.dt;
+      sim.x1  += sim.vx1*sim.dt; sim.y1  += sim.vy1*sim.dt;
+
+      if (sim.has2){
+        sim.vx2 += sim.ax2*sim.dt; sim.vy2 += sim.ay2*sim.dt;
+        sim.x2  += sim.vx2*sim.dt; sim.y2  += sim.vy2*sim.dt;
+      }
+
+      // chão
+      groundBounce(1);
+      if (sim.has2) groundBounce(2);
+
+      // paredes
+      wallBounce(1); if (sim.has2) wallBounce(2);
+
+      // colisão 2D
+      if (sim.has2) circleCollision();
+
+      sim.t += sim.dt;
+
+      // fim precoce no projétil (pouso)
+      if (elCenario.value==="proj" && sim.y1<=0 && sim.t>0.01) sim.t = sim.tEnd;
+    }
+
+    function groundBounce(id){
+      if (id===1 && sim.y1<0){ sim.y1=0; sim.vy1=-sim.vy1*0.7; if (Math.abs(sim.vy1)<0.15) sim.vy1=0; }
+      if (id===2 && sim.y2<0){ sim.y2=0; sim.vy2=-sim.vy2*0.7; if (Math.abs(sim.vy2)<0.15) sim.vy2=0; }
+    }
+    function wallBounce(id){
+      const xmax = (p.width-40)/pxPerMeter;
+      if (id===1){
+        if (sim.x1<0 && sim.vx1<0) sim.vx1=-sim.vx1*0.9;
+        if (sim.x1>xmax && sim.vx1>0) sim.vx1=-sim.vx1*0.9;
+      } else {
+        if (sim.x2<0 && sim.vx2<0) sim.vx2=-sim.vx2*0.9;
+        if (sim.x2>xmax && sim.vx2>0) sim.vx2=-sim.vx2*0.9;
+      }
+    }
+    function circleCollision(){
+      const dx=sim.x2-sim.x1, dy=sim.y2-sim.y1, dist=Math.hypot(dx,dy);
+      const minDist=(sim.rad1+sim.rad2)/pxPerMeter;
+      if (!dist || dist>=minDist) return;
+
+      const nx=dx/dist, ny=dy/dist;
+      // corrige penetração
+      const overlap=minDist-dist, corr=overlap/(1/sim.m1+1/sim.m2);
+      sim.x1-=nx*(corr/sim.m1); sim.y1-=ny*(corr/sim.m1);
+      sim.x2+=nx*(corr/sim.m2); sim.y2+=ny*(corr/sim.m2);
+
+      const rvx=sim.vx2-sim.vx1, rvy=sim.vy2-sim.vy1, rel=rvx*nx+rvy*ny;
+      if (rel>0) return; // afastando
+      const j = -(1+sim.e)*rel/(1/sim.m1+1/sim.m2);
+      const jx=j*nx, jy=j*ny;
+      sim.vx1-= jx/sim.m1; sim.vy1-= jy/sim.m1;
+      sim.vx2+= jx/sim.m2; sim.vy2+= jy/sim.m2;
+    }
+
+    // utilitários
+    function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+    function clampT(T, fallback){ const t = Number(T); return Number.isFinite(t) && t>0 ? t : fallback; }
+    function maxp(v, minv){ const x=Number(v); return Number.isFinite(x) ? Math.max(minv,x) : minv; }
+
+    // API para UI
+    p.resetSim=()=>initFromScenario();
+  });
+}
+
+/* ========== CÁLCULOS, CSV ========== */
+function updateKinematics(t){
+  // bloco 1
+  const vmag1=Math.hypot(sim.vx1,sim.vy1), Ek1=0.5*sim.m1*vmag1*vmag1, ang1=Math.atan2(sim.vy1,sim.vx1)*180/Math.PI;
+  let html = `
+    <div><strong>r1(t)</strong></div><div>(${sim.x1.toFixed(2)}, ${sim.y1.toFixed(2)}) m</div>
+    <div><strong>v1(t)</strong></div><div>(${sim.vx1.toFixed(2)}, ${sim.vy1.toFixed(2)}) m/s</div>
+    <div><strong>a1(t)</strong></div><div>(${sim.ax1.toFixed(2)}, ${sim.ay1.toFixed(2)}) m/s²</div>
+    <div><strong>|v1|</strong></div><div>${vmag1.toFixed(2)} m/s</div>
+    <div><strong>∠v1</strong></div><div>${ang1.toFixed(1)}°</div>
+    <div><strong>Eₖ1</strong></div><div>${Ek1.toFixed(2)} J</div>
+    <div><strong>p1</strong></div><div>(${(sim.m1*sim.vx1).toFixed(2)}, ${(sim.m1*sim.vy1).toFixed(2)}) kg·m/s</div>
+  `;
+  if (sim.has2){
+    const vmag2=Math.hypot(sim.vx2,sim.vy2), Ek2=0.5*sim.m2*vmag2*vmag2, ang2=Math.atan2(sim.vy2,sim.vx2)*180/Math.PI;
+    const ptx = sim.m1*sim.vx1 + sim.m2*sim.vx2, pty = sim.m1*sim.vy1 + sim.m2*sim.vy2;
+    const EkT = Ek1 + Ek2;
+    html += `
+      <div><strong>r2(t)</strong></div><div>(${sim.x2.toFixed(2)}, ${sim.y2.toFixed(2)}) m</div>
+      <div><strong>v2(t)</strong></div><div>(${sim.vx2.toFixed(2)}, ${sim.vy2.toFixed(2)}) m/s</div>
+      <div><strong>a2(t)</strong></div><div>(${sim.ax2.toFixed(2)}, ${sim.ay2.toFixed(2)}) m/s²</div>
+      <div><strong>|v2|</strong></div><div>${vmag2.toFixed(2)} m/s</div>
+      <div><strong>∠v2</strong></div><div>${ang2.toFixed(1)}°</div>
+      <div><strong>Eₖ2</strong></div><div>${Ek2.toFixed(2)} J</div>
+      <div><strong>p2</strong></div><div>(${(sim.m2*sim.vx2).toFixed(2)}, ${(sim.m2*sim.vy2).toFixed(2)}) kg·m/s</div>
+      <div><strong>p_total</strong></div><div>(${ptx.toFixed(2)}, ${pty.toFixed(2)}) kg·m/s</div>
+      <div><strong>Eₖ_total</strong></div><div>${EkT.toFixed(2)} J</div>
+    `;
+  }
+  elKcalc.innerHTML = html;
+}
+
+function pushSample(t){
+  const row = {t, x1:sim.x1, y1:sim.y1, vx1:sim.vx1, vy1:sim.vy1};
+  if (sim.has2){ row.x2=sim.x2; row.y2=sim.y2; row.vx2=sim.vx2; row.vy2=sim.vy2; }
+  samples.push(row); if (samples.length>10000) samples.shift();
+}
+function exportCSV(){
+  if (!samples.length) return;
+  const has2 = 'x2' in samples[0];
+  const header = has2 ? "t,x1,y1,vx1,vy1,x2,y2,vx2,vy2\n" : "t,x1,y1,vx1,vy1\n";
+  const rows = samples.map(s => has2
+    ? `${s.t.toFixed(3)},${s.x1.toFixed(5)},${s.y1.toFixed(5)},${s.vx1.toFixed(5)},${s.vy1.toFixed(5)},${s.x2.toFixed(5)},${s.y2.toFixed(5)},${s.vx2.toFixed(5)},${s.vy2.toFixed(5)}`
+    : `${s.t.toFixed(3)},${s.x1.toFixed(5)},${s.y1.toFixed(5)},${s.vx1.toFixed(5)},${s.vy1.toFixed(5)}`
+  ).join("\n");
+  const blob=new Blob([header+rows],{type:"text/csv"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="simulacao.csv"; a.click();
+}
+
+/* ========== LIGAÇÕES DE UI ========== */
+function loadScenario(){
+  const cfg=cenarios[elCenario.value];
+  renderParams(cfg); renderFormulas(cfg); readParams(cfg);
+  running=false; playBtn.textContent="▶︎ Play";
+  startP5(); // p5 lê 'state' no init
+}
+elCenario.addEventListener("change", loadScenario);
+document.addEventListener("input",(e)=>{
+  if (e.target.id && e.target.id.startsWith("param_")){
+    const cfg=cenarios[elCenario.value]; readParams(cfg);
+    // se está pausado, refletir imediatamente o novo estado
+    if (!running && p5Instance && p5Instance.resetSim) p5Instance.resetSim();
+  }
+});
+playBtn.addEventListener("click",()=>{
+  // garante rodar mesmo se t já chegou no fim ou tEnd inválido
+  if (!Number.isFinite(sim.tEnd) || sim.t >= sim.tEnd){
+    if (p5Instance && p5Instance.resetSim) p5Instance.resetSim();
+  }
+  running=!running;
+  playBtn.textContent = running ? "⏸ Pause" : "▶︎ Play";
+});
+resetBtn.addEventListener("click",()=>{
+  running=false; playBtn.textContent="▶︎ Play";
+  if (p5Instance && p5Instance.resetSim) p5Instance.resetSim();
+  samples.length=0;
+});
+exportBtn.addEventListener("click", exportCSV);
+
+// primeira carga
+loadScenario();
+</script>
+</body>
+</html>
